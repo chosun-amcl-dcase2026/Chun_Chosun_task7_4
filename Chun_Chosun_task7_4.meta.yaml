@@ -4,10 +4,10 @@ submission:
   label: Chun_Chosun_task7_4
 
   # Submission name
-  name: DCASE2026 Challenge Task 7 CovForget K-Fold Ensemble system (gain aug off for baby_cry/telephone)
+  name: DCASE2026 Challenge Task 7 OR-KDL CoLoRA Selective Augment system
 
   # Submission name abbreviated (max 10 chars)
-  abbreviation: CovForgetG
+  abbreviation: OR-KDL-CLS
 
   # Authors
   authors:

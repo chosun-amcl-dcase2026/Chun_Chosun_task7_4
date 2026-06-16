@@ -1,10 +1,11 @@
-# Chun_Chosun_task7_4 — CovForget K-Fold Ensemble (CovForgetG)
+# Chun_Chosun_task7_4 — OR-KDL CoLoRA Selective Augment (OR-KDL-CLS)
 
 DCASE 2026 Challenge **Task 7**, System 4 (Chosun University).
 
-Covariance protection (**CovForget**) with forgetting regularization, orthogonal
-gradient projection, null-space LoRA, distillation, and k-fold ensembling.
-Gain augmentation is disabled for the `baby_cry` and `telephone_ringing` classes.
+Selective-augmentation variant of System 3: covariance protection (**CovForget**)
+with forgetting regularization, orthogonal gradient projection, null-space LoRA,
+distillation, and k-fold ensembling. Gain augmentation is disabled for the
+`baby_cry` and `telephone_ringing` classes.
 
 ## Model checkpoints
 
