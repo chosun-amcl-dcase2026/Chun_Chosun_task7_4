@@ -215,19 +215,12 @@ class LoRACNN14(nn.Module):
                     g = torch.Generator(device=dev); g.manual_seed(20260613)
                     self._cov_gen[dev] = g
                 return g
-            # 선택될 256행의 3x3 패치만 직접 추출 (F.unfold 전체 [N,in*9,L] 미생성 → rank0 spike ~0).
-            #   기존 unfold→permute→reshape→randperm[:k] 와 비트 동일(검증됨): 행 r=b*L+(h*W+w).
-            N_, _C, H_, W_ = x_in.shape
-            L_ = H_ * W_; NL = N_ * L_
-            if NL > self._cov_persample:
-                idx = torch.randperm(NL, generator=_g(x_in.device), device=x_in.device)[:self._cov_persample]
-            else:
-                idx = torch.arange(NL, device=x_in.device)
-            b_i = idx // L_; hw = idx % L_; h_i = hw // W_; w_i = hw % W_
-            xp = F.pad(x_in, (1, 1, 1, 1))                         # zero-pad (kernel=3, padding=1)
-            a = torch.stack([xp[b_i, :, h_i + kh, w_i + kw]
-                             for kh in range(3) for kw in range(3)], dim=-1)   # [k, in, 9]
-            a = a.reshape(idx.shape[0], -1).detach().cpu()        # [k, in*9] (열=c*9+kh*3+kw)
+            a = F.unfold(x_in, kernel_size=3, padding=1)          # [N, in*9, L]
+            a = a.permute(0, 2, 1).reshape(-1, a.shape[1])         # [N*L, in*9]
+            if a.shape[0] > self._cov_persample:
+                idx = torch.randperm(a.shape[0], generator=_g(a.device), device=a.device)
+                a = a[idx[:self._cov_persample]]
+            a = a.detach().cpu()
             key = (block_idx, conv_in_block)
             prev = self._captured_acts.get(key)
             if prev is None:

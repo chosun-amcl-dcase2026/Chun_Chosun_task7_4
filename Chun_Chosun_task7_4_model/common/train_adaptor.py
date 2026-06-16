@@ -209,24 +209,6 @@ class DeltaGPAdaptor:
             kept.append(kp)
         log_fn(f'  cov→protect: hard 보호 모드/conv = {kept}')
 
-    @torch.no_grad()
-    def report_protect_space(self, log_fn=print):
-        """도메인 종료 후 conv 별 보호(동결)된 차원 / 전체 커널공간(in*9) 과 남은 여유 %.
-        free% 가 낮을수록 그 conv 의 null-space 고갈 = 새 도메인 자유도 부족. (로그 전용)"""
-        n_convs = len(self.model._conv_blocks) * 2
-        log_fn('  남은 공간 per conv (free% 낮을수록 고갈):')
-        log_fn('    block.conv   protected / total      free')
-        tot_p = tot_n = 0
-        for ci in range(n_convs):
-            block = self.model._conv_blocks[ci // 2]
-            conv  = block.conv1 if ci % 2 == 0 else block.conv2
-            n = conv.weight.shape[1] * conv.weight.shape[2] * conv.weight.shape[3]   # in*3*3
-            V = self._protect_v[ci]
-            p = 0 if V is None else V.shape[1]
-            tot_p += p; tot_n += n
-            log_fn(f'    {ci//2+1}.{ci%2+1}          {p:5d} / {n:<6d}      {100.0*(n-p)/max(n,1):5.1f}%')
-        log_fn(f'    total       {tot_p:5d} / {tot_n:<6d}      {100.0*(tot_n-tot_p)/max(tot_n,1):5.1f}% free')
-
     def forgetting_penalty(self, eps=1e-5):
         """R = Σ_{prior Σ}Σ_c Σ_i Λ_i ‖ D_out^{-1/2} (ΔW_c u_i) ‖²  (미분가능, 현재 학습 도메인 ΔW).
         = tr(D_out^{-1} ΔW Σ ΔWᵀ) 의 저랭크 전개 = 이전 도메인 망각의 1차 surrogate.

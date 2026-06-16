@@ -1,86 +1,60 @@
 # Submission information
 submission:
   # Submission label
-  # Label is used to index submissions.
-  # Generate your label following way to avoid overlapping codes among submissions:
-  # [Last name of corresponding author]_[Abbreviation of institute of the corresponding author]_task[task number]_[index number of your submission (1-4)]
   label: Chun_Chosun_task7_4
 
   # Submission name
-  # This name will be used in the results tables when space permits.
-  name: DCASE2026 Challenge Task 7 OR-KDL CoLoRA Selective Augment system
+  name: DCASE2026 Challenge Task 7 CovForget K-Fold Ensemble system (gain aug off for baby_cry/telephone)
 
-  # Submission name abbreviated
-  # This abbreviated name will be used in the results table when space is tight.
-  # Use a maximum of 10 characters.
-  abbreviation: OR-KDL-CLS
+  # Submission name abbreviated (max 10 chars)
+  abbreviation: CovForgetG
 
-  # Authors of the submitted system.
-  # Mark authors in the order you want them to appear in submission lists.
-  # One of the authors has to be marked as corresponding author, this will be listed next to the submission in the results tables.
+  # Authors
   authors:
-    # First author
     - firstname: Chun
       lastname: Chanjun
-      email: cjchun@chosun.ac.kr # Contact email address
-      corresponding: true # Mark true for one of the authors
-
-      # Affiliation information for the author
+      email: cjchun@chosun.ac.kr
+      corresponding: true
       affiliation:
         institution: Chosun University
         department: Department of Computer Engineering
         location: Gwangju, Republic of Korea
 
-    # Second author
     - firstname: Kim
       lastname: Hanseul
-      email: khs020512@chosun.ac.kr # Contact email address
-
-      # Affiliation information for the author
+      email: khs020512@chosun.ac.kr
       affiliation:
         institution: Chosun University
         department: Department of Computer Engineering
         location: Gwangju, Republic of Korea
 
-    # Third author
     - firstname: Kim
       lastname: Eojin
-      email: jjj333@chosun.ac.kr # Contact email address
-
-      # Affiliation information for the author
+      email: jjj333@chosun.ac.kr
       affiliation:
         institution: Chosun University
         department: Department of Computer Engineering
         location: Gwangju, Republic of Korea
 
-    # Fourth author
     - firstname: Lee
       lastname: Jihyuk
-      email: dlwlgur02@chosun.ac.kr # Contact email address
-
-      # Affiliation information for the author
+      email: dlwlgur02@chosun.ac.kr
       affiliation:
         institution: Chosun University
         department: Department of Computer Engineering
         location: Gwangju, Republic of Korea
 
-    # Fifth author
     - firstname: Bae
       lastname: Junho
-      email: rfvq56@chosun.ac.kr # Contact email address
-
-      # Affiliation information for the author
+      email: rfvq56@chosun.ac.kr
       affiliation:
         institution: Chosun University
         department: Department of Computer Engineering
         location: Gwangju, Republic of Korea
 
-    # Sixth author
     - firstname: Park
       lastname: Donghyeok
-      email: ehdgur4277@chosun.ac.kr # Contact email address
-
-      # Affiliation information for the author
+      email: ehdgur4277@chosun.ac.kr
       affiliation:
         institution: Chosun University
         department: Department of Computer Engineering
@@ -88,71 +62,65 @@ submission:
 
 # System information
 system:
-  # System description, metadata provided here will be used to do a meta-analysis of the submitted system.
-  # Use general level tags, when possible use the tags provided in comments.
-  # If information field is not applicable to the system, use "!!null".
   description:
     # Data augmentation methods
-    # Please specify all methods used (comma-separated list).
-    # e.g. mixup, time stretching, block mixing, pitch shifting, ...
-    data_augmentation: mixup, wavgain, spec augmentation, balanced sampling, class-selective augmentation
+    # task7_3와 동일하되 gain 증강만 baby_cry/telephone_ringing 2개 클래스 제외(COND off)
+    data_augmentation: mixup, gain augmentation (off for baby_cry and telephone_ringing), spec augmentation, balanced sampling
 
     # How the system handles catastrophic forgetting
-    # Please specify all methods used (comma-separated list).
-    # e.g. regularization, distillation, domain_specific_components, ...
-    catastrophic_forgetting_handling: weight-based orthogonal gradient projection, distillation, colora, block gate, k-fold ensemble
+    catastrophic_forgetting_handling: covariance protection (CovForget), forgetting regularization, orthogonal gradient projection, null-space lora, distillation, ensemble
 
     # Does the system explicitly predict the domain? (true/false)
     domain_specific_components: false
 
-  # URL to the source code of the system [optional, highly recommended]
-  # Reproducibility will be used to evaluate submitted systems.
-  source_code: 
+  # URL to the source code of the system
+  source_code: https://github.com/chosun-amcl-dcase2026/Chun_Chosun_task7_4
 
 # System results
+# Top-20 ensemble (val_macro), variable_len + TTA-off, active_domain_count=2
 results:
   development_dataset:
 
     # Accuracy after D2
     Step2:
       Domain2:
-        average: 81.39
+        average: 83.16
 
-        # classiwise
-        alarm: 76.92
-        dog: 82.61
-        engine: 85.51
-        fire: 61.11
-        footsteps: 87.76
-        knock: 88.89
-        piano: 80.41
-        speech: 87.94
+        # classwise
+        alarm: 73.85
+        dog_bark: 86.96
+        engine: 88.41
+        fire: 66.67
+        footsteps: 89.8
+        knocking: 86.11
+        piano: 86.6
+        speech: 86.93
 
     # Accuracy after D3
     Step3:
       Domain2:
-        average: 77.88
+        average: 79.14
 
         # classwise
-        alarm: 70.0
-        dog: 95.65
+        alarm: 64.62
+        dog_bark: 95.65
         engine: 73.91
-        fire: 55.56
-        footsteps: 91.84
-        knock: 72.22
-        piano: 81.44
-        speech: 82.41
+        fire: 58.33
+        footsteps: 93.88
+        knocking: 77.78
+        piano: 85.57
+        speech: 83.42
 
       Domain3:
-        average: 62.2
+        average: 66.61
 
         # classwise
-        alarm: 77.42
-        baby: 58.33
-        dog: 71.43
-        engine: 75.29
-        fire: 48.65
-        footsteps: 57.46
-        phone: 35.48
+        alarm: 75.81
+        baby_cry: 62.5
+        dog_bark: 75.32
+        engine: 77.65
+        fire: 45.95
+        footsteps: 56.72
         piano: 97.26
-        speech: 38.52
+        speech: 47.0
+        telephone_ringing: 61.29

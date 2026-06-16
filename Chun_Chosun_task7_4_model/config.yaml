@@ -1,100 +1,58 @@
 # ============================================================
-# exp14_ResidualKD — exp13 기반 + KD 강도 α 를 drift '비율'로 산출 (스케일-프리, 비순환, CKA-drift only).
-#   완성된 논리: α(t) = clamp( prior_drift / (prior_drift + own_drift), α_lo, α_hi ).
-#     prior_drift=Σ_{j<t}drift_j(보호할 fragility=분자), own_drift=drift_t(적응 가소성=분모), drift_j=mean(drift_conv_bn).
-#   계보: exp11(own-drift) Fr12 반증(역방향) · exp12(overlap-ρ) 무차별 반증 · exp14-φ(Σ침범) Fr16 반증
-#         · 지수포화-τ(D3=0.7 fit) = 순환(손튜닝 답에 캘리브) → 최종 비율식(스케일-프리, 비순환).
-#   비율식이 정답인 이유: 자유 스케일 0개 → 손튜닝 0.7 모르고 drift 만으로 D3=0.642 독립 산출(반증가능).
-#     own 을 분모에 둬 exp11(가소성) + prior 를 분자에 둬 exp13(안정성) 교훈 통합. ratio<1 자기포화.
-#   ★ α 만 동적. temp/feat_weight 는 도메인 spec. true-IL(외부 데이터 0, drift=오프라인 동결값).
-#   kd_from_drift=false → exp13 과 동일(손튜닝 spec.kd).
+# covforget_kfold — exp13_CovForget K-Fold 앙상블
+#   exp13 설정 그대로, data_dir / d1_ckpt 경로만 로컬로 변경
 # ============================================================
 
 mode: core_bga_deltagp
 
 exp:
-  id: "16"
-  method: "exp15(CoForge: Σ-cov 보호 + drift-비율 KD + 게이트 + KeepLoRA) 를 K-Fold 로 재설정. method/epochs/early-stop 은 exp15 그대로, gain 만 COND[1,7] 제외. D2 5-fold→5모델, D3 5×5→25모델, val_macro Top-N 앙상블. 비-DDP, GPU 2장 각각 독립 실행(동시 2프로세스)."
+  id: "covforget_kfold"
+  method: "exp13_CovForget K-Fold (Σ-cov 보호 + 망각 R penalty)"
   date: "2026-06-11"
-  notes: "K-Fold 프로토콜(§2) 적용: K=5 stratified(seed=42). Phase1 D2 모델 5개(d2_fold별), Phase2 D3 모델 25개(5×5 전조합, seed=42+d2f*10+d3f, post-D2 스냅샷 in-memory 재사용). Phase3 val_macro(자기 D3 val fold best) 내림차순 Top-N(5/10/15/20/25) crop_4s+TTA[1.0,0.85,1.15] softmax 앙상블. 선정은 val_macro만(test leakage 금지). ★exp15 대비 변경점만: (1)val split=K-Fold 20% (2)gain COND[1,7] 제외 (3)batch 32→64(비-DDP 단일프로세스 eff_batch 재현) (4)2GPU 비-DDP 병렬. CoForge method/200·400ep/early-stop best-val 은 전부 exp15 유지."
+  notes: "exp13 설정 기반 K=5 Stratified K-Fold 앙상블"
 
-# ── 블록 게이트 (증분 역행 방지 / 임의 T 비감소 보장) ─────────────────────────
-# g_b = sigmoid(gate_theta) ∈ (0,1), ΔW_block ← g_b·ΔW_block. 도메인 LoRA 와 함께 학습.
-# init_logit=4 → g≈0.982 (exp07 과 거의 동일 출발, 이후 학습으로 하향 가능).
-# 더 보수적으로 시작하려면 0(g=0.5) 또는 음수. use=false → 게이트 미적용(exp07 수치 동일).
+# ── 블록 게이트 ───────────────────────────────────────────
 gate:
   use: true
   init_logit: 4.0
 
-# ── exp13: 활성 공분산 Σ_prior 보호 + 망각 penalty (true-IL: 자기 phase 자기 데이터만) ──
-# Σ 는 *학습 forward 도중* 매 cov_every 배치 수집(별도 패스 없음, mixup 없는 배치만 → 깨끗).
-# 보호: A ⊥ top-eig(Σ) (energy_protect 까지 hard).  penalty: R = beta·tr(D_out⁻¹ ΔW Σ ΔWᵀ).
-# beta ★튜닝 대상 — Fr↓ 와 D3@D3 손해의 균형점 탐색.
+# ── exp13: 활성 공분산 보호 + 망각 penalty ────────────────
 cov_forget:
   use: true
-  cov_every: 8           # 학습 중 활성 수집 주기(배치). 별도 forward 없음.
-  energy: 0.95           # 저랭크 Σ 누적에너지(캐시 모드 수, ≤k_max)
+  cov_every: 8
+  energy: 0.95
   k_max: 256
-  energy_protect: 0.90   # 이 누적에너지까지 hard 보호(A⊥), 나머지 모드는 soft R
-  beta: 1.0e-3           # R penalty 가중 (β=1e-3 최고 Acc 69.96/Fr 3.00. β↑는 Acc 손해 확인)
-  kd_from_drift: true    # exp14: KD α 를 *이전* 도메인 누적 drift 로 유도(아래 kd_prior). false면 손튜닝 spec.kd
+  energy_protect: 0.90
+  beta: 1.0e-3
 
-# ── exp14(재설계): drift-비율 KD. kd_from_drift=true 일 때만 ──────────────────────
-# α(t) = clamp( prior_drift / (prior_drift + own_drift),  alpha_lo, alpha_hi )   ← 스케일-프리 비율
-#   prior_drift = Σ_{j<t} drift_j  (이전 도메인 누적 = 보호할 fragility, 분자)
-#   own_drift   = drift_t          (현재 도메인 자기 drift = 적응 가소성, 분모)  / drift_j=mean(drift_conv_bn)
-#   의미: '표현 변화 압력 중 뒤를 지키는 비중'. prior↑→KD↑(안정), own↑→KD↓(가소).
-#   ★ 자유 스케일 0개 → 손튜닝 답(0.7)에 fit 안 함(비순환). D3=0.642 를 drift 만으로 독립 산출(반증가능).
-#   ★ exp11(own=분모) + exp13(prior=분자) 통합. ratio<1 자기포화 → alpha_hi cap 보통 미발동(大T 안전장치).
-#   ★ α 만 drift 로 동적. temp·feat_weight 는 domains[].kd(또는 domain_defaults.kd) 에서.
-# (이전: 지수포화 τ 캘리브 → D3=0.7 정확 재현했으나 손튜닝 답에 fit = 순환. 비율식이 비순환·진짜 예측.)
-kd_prior:
-  alpha_lo: 0.1          # 바닥: 첫 적응 도메인(prior=0) KD α (가소성 안전 최소값. 유일 손설정)
-  alpha_hi: 1.0          # 천장 cap (비율은 항상 <1 라 보통 미발동; 매우 큰 T 안전장치)
-  alpha_override: null   # ★응답곡선 probe: 숫자 설정 시 prior>0 도메인(D3+) α 를 강제(D2 바닥 유지). null=비율식
-  #   사용법: 절벽 탐색 시 0.40 등으로 설정→Fr/D3@D3 측정→null 로 복귀. temp/fw 는 domains[].kd 유지
-
-# ── 도메인 시퀀스 (임의 T) — ★여기에 도메인별 백본기준 drift 리스트만 추가하면 끝 ──────
-# rank 는 drift 에서 자동 산출(drift_to_block_configs): r_A∝drift_conv_bn(구조),
-#   r_B∝drift_bn(=conv_only−conv_bn, BN흡수), 단일 스케일로 최고블록 r_A+r_B=ceiling.
-#   block1 r_A 는 in*9=9 로 자동 클램프. (검증된 D2/D3 rank 정확 재현)
-# drift 측정: expm1_corr_estm (conv_bn=BN학습 CKA, conv_only=BN동결 CKA, Δ=conv_only−conv_bn).
-# D4,D5… 확장: 항목 하나 추가(이름·drift 2개·ceiling·하이퍼). 절차(보호·Σ·R·게이트)는 전부 동일.
-# domains[].kd 사용처(drift 모드): kd_temp·kd_feat_weight=항상 사용 / kd_alpha=kd_from_drift:false 일 때만(현재 비율식이 대체)
+# ── 도메인 시퀀스 (exp13 그대로) ─────────────────────────
 domain_defaults:
-  kd: {kd_alpha: 0.1, kd_temp: 2.0, kd_feat_weight: 0.2}   # 도메인별 override 가능. kd_alpha=fallback(미사용)
+  kd: {kd_alpha: 0.1, kd_temp: 2.0, kd_feat_weight: 0.2}
 domains:
   - name: D2
-    drift_conv_bn: [0.0230, 0.2463, 0.2756, 0.3021, 0.5021, 0.7848]   # 구조 drift → r_A
-    drift_bn:      [0.0171, 0.0215, 0.0000, 0.0744, 0.0455, 0.0244]   # BN흡수 drift Δ(음수→0) → r_B
-    ceiling: 128 #128
+    drift_conv_bn: [0.0230, 0.2463, 0.2756, 0.3021, 0.5021, 0.7848]
+    drift_bn:      [0.0171, 0.0215, 0.0000, 0.0744, 0.0455, 0.0244]
+    ceiling: 128
     lr: 1.0e-3
     epochs: 200
-    patience: 20            # ★ early_stop 아닌 여기서 읽힘 (일반화 path)
+    patience: 20
     min_epochs: 20
     warm: false
-    kd: {kd_alpha: 0.1, kd_temp: 2.0, kd_feat_weight: 0.2}   # temp·fw 사용 / kd_alpha 미사용(비율식 0.1=바닥과 우연 일치)
-    #    kd: {kd_alpha: 0.1, kd_temp: 2.0, kd_feat_weight: 0.2}
+    kd: {kd_alpha: 0.1, kd_temp: 2.0, kd_feat_weight: 0.2}
   - name: D3
     drift_conv_bn: [0.2215, 0.1719, 0.1216, 0.1823, 0.2413, 0.2502]
     drift_bn:      [0.1010, 0.0498, 0.1092, 0.1187, 0.2301, 0.2291]
-    ceiling: 80 #80
+    ceiling: 80
     lr: 2.5e-4
     epochs: 400
-    patience: 30            # ★ early_stop 아닌 여기서 읽힘
-    min_epochs: 40          # backup 과 동일 (직전 10 → D3 조기정지로 망각 8.78 유발)
+    patience: 30
+    min_epochs: 40
     warm: true
-    kd: {kd_alpha: 0.7, kd_temp: 1.5, kd_feat_weight: 0.2}   # temp·fw 사용 / kd_alpha 미사용(비율식이 0.642로 대체. 0.7=fallback)
-    #    kd: {kd_alpha: 0.7, kd_temp: 1.5, kd_feat_weight: 0.2}
+    kd: {kd_alpha: 0.7, kd_temp: 1.5, kd_feat_weight: 0.2}
 
-# ════════════════════════════════════════════════════════════════════
-# ★ 환경별 수정 필요 — 폴더를 다른 서버로 옮기면 data_dir 한 줄만 고친다.
-#   data_dir : 그 서버의 Task7 데이터셋 루트 (metadata/*.csv + d2/d3-dev-* 폴더 보유)
-#   d1_ckpt  : 패키지에 번들된 D1_dictionary/checkpoint_D1.pth (상대경로=실험 루트 기준 → 수정 불필요)
-#   env 오버라이드: TASK7_LORA_DATASET_DIR, TASK7_D1_CKPT
-# ════════════════════════════════════════════════════════════════════
+# A5000 서버 기준 경로 (로컬에서 돌릴 땐 TASK7_LORA_DATASET_DIR / D1_CKPT env로 override)
 data_dir: /data/dcase26/dataset
-d1_ckpt:  /data/dcase26/baseline/checkpoints/BN/checkpoint_D1.pth
+d1_ckpt:  /workspace/dcase_kfold/checkpoint_D1.pth   # fallback — checkpoints/checkpoint_D1.pth 동봉본이 우선
 
 # ── 오디오 / mel ──────────────────────────────────────────
 audio:
@@ -106,55 +64,27 @@ audio:
   hop_size: 320
   num_classes: 10
 
-# ── 결정성 ↔ 속도 (exp16) ─────────────────────────────────
-#   false(기본): cudnn.benchmark 켜서 고정 입력 conv autotune → conv 2~3배 빠름.
-#                런마다 ~0.8%p 노이즈(val Top-N 25모델 앙상블에선 씻김) → K-Fold 권장.
-#   true       : exp15 동일 비트 재현성(benchmark off + 결정성 알고리즘). 느림.
-deterministic: false
-
 # ── 재현성 / val split ────────────────────────────────────
 seed: 1193
 val_seed: 1193
-val_ratio: 0.15        # exp16 미사용(K-Fold 가 val split 담당). config.py 호환용으로 유지
-
-# ── exp16: K-Fold (프로토콜 §2-1) ─────────────────────────
-#   D2/D3 각각 독립 5-fold(클래스별 stratified). seed 고정 → 모든 조합 동일 split.
-#   Phase1 D2 모델 5개(d2_fold별) → Phase2 D3 모델 25개(5×5) → Phase3 val_macro Top-N 앙상블.
-kfold:
-  k_total: 5
-  seed: 42             # 프로토콜 §2-1 고정 seed (split 결정성)
-  d2_seed_base: 42     # D2 fold 학습 RNG seed = d2_seed_base + d2_fold
-  combo_seed_base: 42  # D3 조합 학습 RNG seed = combo_seed_base + d2_fold*10 + d3_fold (프로토콜 §2-2)
-  topn: [5, 10, 15, 20, 25]   # Phase3 앙상블 크기 후보 (val_macro 내림차순 Top-N)
-  submission_n: 20     # ★기본 제출 앙상블 크기 = val_macro 상위 N 고정(사전규칙). null → auto-N(val_macro≥평균). test 미참조.
-  out_dir: kfold       # fold별 체크포인트 저장 루트 (exp16_KFoldCoForge/kfold/)
-
-# ── exp16: gain 조건부 예외 (프로토콜 §1-2, exp04 설정) ────
-#   gain aug 만 아래 클래스 제외(Mixup·SpecAug 는 전 클래스). baby_cry=1, telephone_ringing=7.
-cond_classes: [1, 7]
-
-# ── Validation 평가 방식 (test 는 항상 원본 full-clip batch=1 유지) ──
-val_eval:
-  chunk: true    # true = 4s 청크(빠름, train 형식) / false = 원본 full-clip 을 같은 길이끼리 배치(backup 재현)
+val_ratio: 0.15
 
 # ── LoRA ──────────────────────────────────────────────────
 lora:
-  alpha: 64.0            # 사용
-  tune_bn: false         # 사용 — backbone BN 완전 동결(다른 도메인 BN 학습 절대 금지)
-  # ↓ config.py(common) 호환 전용 — exp14 미사용. rank 는 domains[].drift 에서 자동 산출.
+  alpha: 64.0
+  tune_bn: false
   d2_rank: 128
   d3_rank: 64
 
-# ── 학습 공통 (전역 — 사용) ───────────────────────────────
+# ── 학습 공통 ─────────────────────────────────────────────
 train:
-  batch_size: 64        # exp16: 비-DDP 단일프로세스. exp15 2GPU DDP eff_batch(32×2=64) 재현
+  batch_size: 32
   weight_decay: 1.0e-5
   grad_clip: 1.0
   num_workers: 4
   lr_eta_min: 1.0e-6
   log_every: 10
   epochs_override: null
-  # ↓ config.py 호환 전용 — exp14 미사용. lr/epochs 는 domains[] 에서 읽음.
   lr_d2: 1.0e-3
   lr_d3: 2.5e-4
   d2_epochs: 200
@@ -162,36 +92,32 @@ train:
 
 # ── Early stopping ────────────────────────────────────────
 early_stop:
-  min_delta: 0.001         # 사용 (전역)
-  patience_on: macro       # 사용 (전역 정지신호 지표)
-  best_on: macro           # 사용 (복원/저장 기준)
-  # ↓ config.py 호환 전용 — exp14 미사용. patience/min_epochs 는 domains[] 에서 읽음.
+  min_delta: 0.001
+  patience_on: macro
+  best_on: macro
   d2_patience: 20
   d3_patience: 30
   d2_min_epochs: 20
   d3_min_epochs: 40
 
-# ── D1 보호 SVD 컷오프 (D2+ 보호는 cov_forget 의 Σ-cov 가 담당) ────────────
-# p_svd_d2/d3 는 config.py(KD_D1/D2 외) 호환용으로만 둠 — exp13 미사용.
-pace:
-  p_svd_d1: 0.99                          # D1 weight SVD 컷오프 (D1 보호)
-  svd_eps: 1.0e-7
-  # ↓ config.py 호환 전용 — exp14 미사용
-  p_svd_d2: 0.9                           # config.py 호환용 (미사용)
-  p_svd_d3: 0.9                           # config.py 호환용 (미사용)
+# ── KD (호환용) ───────────────────────────────────────────
+kd:
+  d1: {kd_alpha: 0.1, kd_temp: 2.0, kd_feat_weight: 0.2}
+  d2: {kd_alpha: 0.7, kd_temp: 1.5, kd_feat_weight: 0.2}
 
-# ── KeepLoRA: gradient 기반 B 초기화 ──────────────────────
-# zero-init B 대신 현재 도메인 첫 n_batches gradient 방향으로 B 초기화:
-#   B = -eta·grad_B/scale²  ⇒  ΔW_init ≈ -eta·proj_null(∂L/∂ΔW) (full-FT grad 근사).
-# A는 null(V_old) 고정 → 어떤 B라도 망각 0. 현재 도메인 데이터만 forward (true-IL 합치).
-# eta: ΔW_init 크기(투영 gradient의 배율). 큰 첫 점프라 0.05~0.2에서 탐색.
+# ── D1 보호 SVD ───────────────────────────────────────────
+pace:
+  p_svd_d1: 0.99
+  p_svd_d2: 0.9
+  p_svd_d3: 0.9
+  svd_eps: 1.0e-7
+
+# ── KeepLoRA ──────────────────────────────────────────────
 keeplora_binit:
   use: true
-  eta: 0.1                 # 5.55 best 복사 (직전 0.0001)
-  n_batches: 4             # 5.55 best 복사 (직전 16)
-  align_A: false           # [A] 실험 결과 net 손해(D3@D3 +1.6 vs Fr +4.5)→되돌림. base=B-only가 우월
-                           #   (false=A는 기존 임의 null basis, B만 init). 망각0 유지, D3@D3↑ 노림.
-                           #   α(공간크기)와 직교: '양' 대신 '방향 품질'. true-IL 합치(현재도메인 데이터만).
+  eta: 0.1
+  n_batches: 4
+  align_A: false
 
 # ── 학습 트릭 ─────────────────────────────────────────────
 focal:
@@ -215,34 +141,18 @@ gain_aug:
   low: 0.7
   high: 1.3
 
+# task7_4: gain 증강 제외 클래스 (KFOLD CLASS_LABELS 기준: baby_cry=1, telephone_ringing=9)
+cond_no_gain_classes: [1, 9]
+
 dropout: 0.2
 
 # ── Sampling ──────────────────────────────────────────────
 sampling:
   use_balanced: true
   hard_classes: [0, 4]
-  hard_class_multiplier: 5.0
+  hard_class_multiplier: 1.0
 
-# ── Audio chunk 분할 ──────────────────────────────────────
+# ── Audio chunk ───────────────────────────────────────────
 chunk:
   seconds: 4.0
-  min_seconds: 1.0         # 최고설정(030718) 복원 (D2 chunks 1809)
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# config.py(common) 호환 전용 — exp14 미사용. 지우면 import 에러(하드 인덱싱). 튜닝 대상 아님.
-#   실제 exp14 동작은 전부 위쪽 도메인-구동(domains[], kd_prior, cov_forget, gate)에서 나온다.
-#   ▸ 아래 kd: 블록은 통째로 미사용 (KD 는 kd_prior 비율식 + domains[].kd 에서).
-#   ▸ 중첩 compat 키는 부모 dict 밖으로 못 빼서 각 블록 하단에 남겨둠(배너 표시):
-#       lora.d2_rank/d3_rank   train.lr_d2/lr_d3/d2_epochs/d3_epochs
-#       early_stop.d2_patience/d3_patience/d2_min_epochs/d3_min_epochs   pace.p_svd_d2/p_svd_d3
-# ════════════════════════════════════════════════════════════════════════════
-kd:                        # config.py KD_D1/KD_D2 전용. 실제 KD α 는 kd_prior(drift 비율)에서 산출
-  d1:
-    kd_alpha: 0.1
-    kd_temp: 2.0
-    kd_feat_weight: 0.2
-  d2:
-    kd_alpha: 0.7
-    kd_temp: 1.5
-    kd_feat_weight: 0.2
+  min_seconds: 1.0

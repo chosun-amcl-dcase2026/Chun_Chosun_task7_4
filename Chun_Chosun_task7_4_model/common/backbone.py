@@ -86,7 +86,7 @@ class CNN14Backbone(nn.Module):
                   self.conv_block4, self.conv_block5, self.conv_block6]
         for i, block in enumerate(blocks):
             x = block(x)
-            x = F.dropout(x, c.DROPOUT, training=self.training)   # 3단계: dropout 외부화(config.yaml)
+            x = F.dropout(x, 0.2, training=self.training)
         x = torch.mean(x, dim=3)
         x1, _ = torch.max(x, dim=2)
         x2 = torch.mean(x, dim=2)
